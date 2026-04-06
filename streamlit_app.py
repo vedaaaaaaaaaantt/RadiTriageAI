@@ -93,8 +93,8 @@ def backward_hook(module, grad_in, grad_out):
     global gradients
     gradients = grad_out[0]
 
-model.layer4.register_forward_hook(forward_hook)
-model.layer4.register_full_backward_hook(backward_hook)
+model.features.register_forward_hook(forward_hook)
+model.features.register_backward_hook(backward_hook)
 
 # ---------------- TRANSFORM ----------------
 transform = transforms.Compose([
