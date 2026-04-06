@@ -1,0 +1,273 @@
+import streamlit as st
+import torch
+import torch.nn as nn
+from torchvision import models, transforms
+from PIL import Image
+import numpy as np
+import cv2
+import uuid
+import os
+
+from fpdf import FPDF
+
+def clean_text(text):
+    return text.encode("latin-1", "ignore").decode("latin-1")
+
+def generate_pdf(name, patient_id, predictions, risk, urgency):
+    pdf = FPDF()
+    pdf.add_page()
+
+    pdf.set_font("Arial", size=12)
+
+    pdf.cell(200, 10, txt="RadiTriageAI Report", ln=True, align='C')
+    pdf.ln(10)
+
+    pdf.cell(200, 10, txt=clean_text(f"Patient Name: {name}"), ln=True)
+    pdf.cell(200, 10, txt=clean_text(f"Patient ID: {patient_id}"), ln=True)
+    pdf.ln(5)
+
+    pdf.cell(200, 10, txt=clean_text(f"Risk Score: {round(risk, 3)}"), ln=True)
+    pdf.cell(200, 10, txt=clean_text(f"Urgency: {urgency}"), ln=True)
+    pdf.ln(10)
+
+    pdf.cell(200, 10, txt="Top Predictions:", ln=True)
+
+    for label, conf in predictions:
+        pdf.cell(200, 10, txt=clean_text(f"{label}: {round(conf, 3)}"), ln=True)
+
+    file_path = "report.pdf"
+    pdf.output(file_path)
+
+    return file_path
+
+
+if "history" not in st.session_state:
+    st.session_state.history = []
+
+# ---------------- CONFIG ----------------
+DEVICE = torch.device("cpu")
+
+CLASS_NAMES = [
+    "No Finding", "Enlarged Cardiomediastinum", "Cardiomegaly",
+    "Lung Opacity", "Lung Lesion", "Edema",
+    "Consolidation", "Pneumonia", "Atelectasis",
+    "Pneumothorax", "Pleural Effusion", "Pleural Other",
+    "Fracture", "Support Devices"
+]
+
+MODEL_PATH = "models/chexpert_epoch_10.pth"
+
+# ---------------- LOAD MODEL ----------------
+@st.cache_resource
+def load_model():
+    model = models.resnet50(weights=None)
+    model.fc = nn.Linear(model.fc.in_features, 14)
+
+    model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+    model.to(DEVICE)
+    model.eval()
+    return model
+
+model = load_model()
+
+# ---------------- GRAD-CAM HOOKS ----------------
+features = None
+gradients = None
+
+def forward_hook(module, input, output):
+    global features
+    features = output
+
+def backward_hook(module, grad_in, grad_out):
+    global gradients
+    gradients = grad_out[0]
+
+model.layer4.register_forward_hook(forward_hook)
+model.layer4.register_full_backward_hook(backward_hook)
+
+# ---------------- TRANSFORM ----------------
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+])
+
+# ---------------- PROCESS ----------------
+def process_image(image):
+    img = transform(image).unsqueeze(0).to(DEVICE)
+
+    # forward
+    output = model(img)
+    probs = torch.sigmoid(output)[0]
+
+    # top 3
+    top3 = torch.topk(probs, 3)
+
+    predictions = []
+    for i in range(3):
+        idx = top3.indices[i].item()
+        conf = top3.values[i].item()
+        predictions.append((CLASS_NAMES[idx], round(conf, 3)))
+
+    # grad-cam
+    model.zero_grad()
+    target_class = top3.indices[0]
+    output[0, target_class].backward()
+
+    weights = gradients.mean(dim=[2, 3], keepdim=True)
+    cam = (weights * features).sum(dim=1).squeeze()
+
+    cam = torch.relu(cam).detach().cpu().numpy()
+    cam = cv2.resize(cam, (224, 224))
+
+    if cam.max() != 0:
+        cam = cam / cam.max()
+
+    heatmap = cv2.applyColorMap(np.uint8(255 * cam), cv2.COLORMAP_JET)
+
+    img_np = np.array(image.resize((224, 224)))
+    img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+
+    overlay = cv2.addWeighted(img_np, 0.6, heatmap, 0.4, 0)
+
+    # get highest prediction confidence
+    risk = top3.values[0].item()
+
+    def get_urgency(score):
+        if score > 0.85:
+            return "🚨 CRITICAL"
+        elif score > 0.6:
+            return "⚠️ HIGH"
+        elif score > 0.3:
+            return "MODERATE"
+        else:
+            return "LOW"
+
+    urgency = get_urgency(risk)
+
+    return predictions, overlay, risk, urgency
+
+
+# ---------------- UI ----------------
+# ---------------- UI ----------------
+st.subheader("👤 Patient Info")
+
+patient_name = st.text_input("Patient Name")
+patient_id = st.text_input("Patient ID")
+
+uploaded_files = st.file_uploader(
+    "Upload Chest X-rays",
+    type=["jpg", "png", "jpeg"],
+    accept_multiple_files=True
+)
+
+# ---------------- MULTI FILE ANALYSIS ----------------
+if uploaded_files:
+
+    if st.button("Analyze All"):
+
+        results = []
+
+        # 🔁 PROCESS ALL FILES
+        for uploaded_file in uploaded_files:
+
+            image = Image.open(uploaded_file).convert("RGB")
+
+            with st.spinner(f"Analyzing {uploaded_file.name}..."):
+                predictions, heatmap, risk, urgency = process_image(image)
+
+            results.append({
+                "file_name": uploaded_file.name,
+                "image": image,
+                "heatmap": heatmap,
+                "risk": risk,
+                "urgency": urgency,
+                "predictions": predictions
+            })
+
+        # 🔥 SORT BY PRIORITY (HIGH RISK FIRST)
+        results = sorted(results, key=lambda x: x["risk"], reverse=True)
+
+        # 🔁 DISPLAY RESULTS
+        for result in results:
+
+            st.markdown("---")
+
+            # 🚨 Highlight priority
+            if result["urgency"] == "🚨 CRITICAL":
+                st.markdown("## 🚨 PRIORITY CASE")
+
+            st.markdown(f"## 🧾 {result['file_name']}")
+
+            # ✅ SAVE TO HISTORY
+            st.session_state.history.append({
+                "name": patient_name,
+                "id": patient_id,
+                "risk": round(result["risk"], 3),
+                "urgency": result["urgency"],
+                "top_prediction": result["predictions"][0][0]
+            })
+
+
+            # 🖼️ SIDE BY SIDE VIEW
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.image(result["image"], width=250)
+
+            with col2:
+                st.image(result["heatmap"], channels="BGR", width=250)
+
+            # 🚑 TRIAGE
+            st.metric("Risk Score", round(result["risk"], 3))
+
+            if result["urgency"] == "🚨 CRITICAL":
+                st.error("CRITICAL — Immediate attention required")
+            elif result["urgency"] == "⚠️ HIGH":
+                st.warning("HIGH — Priority case")
+            elif result["urgency"] == "MODERATE":
+                st.info("MODERATE — Monitor closely")
+            else:
+                st.success("LOW — Routine case")
+
+            # 🧠 PREDICTIONS
+            st.subheader("Predictions")
+            for label, conf in result["predictions"]:
+                st.write(label)
+                st.progress(float(conf))
+
+            # 🧠 PREDICTIONS
+            st.subheader("Predictions")
+            for label, conf in result["predictions"]:
+                st.write(label)
+                st.progress(float(conf))
+
+            # 📄 GENERATE PDF
+            pdf_path = generate_pdf(
+                patient_name,
+                patient_id,
+                result["predictions"],
+                result["risk"],
+                result["urgency"]
+            )
+
+            # ⬇️ DOWNLOAD BUTTON
+            with open(pdf_path, "rb") as f:
+                st.download_button(
+                    label="📄 Download Report",
+                    data=f,
+                    file_name=f"{result['file_name']}_report.pdf",
+                    mime="application/pdf"
+                )
+
+
+# ---------------- HISTORY ----------------
+st.subheader("📋 Case History")
+
+if "history" in st.session_state and st.session_state.history:
+    for case in reversed(st.session_state.history):
+        st.write(
+            f"{case['name']} ({case['id']}) — "
+            f"{case['top_prediction']} | {case['urgency']} | Risk: {case['risk']}"
+        )
+else:
+    st.write("No cases yet")

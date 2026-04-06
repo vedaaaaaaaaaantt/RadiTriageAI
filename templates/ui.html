@@ -1,0 +1,40 @@
+<input type="file" id="file" />
+<button onclick="upload()">Analyze</button>
+
+<ul id="predictions"></ul>
+<img id="heatmap" width="300"/>
+
+<script>
+async function upload() {
+  const fileInput = document.getElementById("file");
+
+  if (!fileInput.files.length) {
+    alert("Select image first");
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("file", fileInput.files[0]);  // ✅ MUST MATCH BACKEND
+
+  const res = await fetch("/predict", {
+    method: "POST",
+    body: formData
+  });
+
+  const data = await res.json();
+  console.log("RESPONSE:", data);
+
+  // predictions
+  const list = document.getElementById("predictions");
+  list.innerHTML = "";
+
+  data.predictions.forEach(p => {
+    const li = document.createElement("li");
+    li.innerText = p[0] + ": " + p[1];
+    list.appendChild(li);
+  });
+
+  // heatmap
+  document.getElementById("heatmap").src = "/" + data.image_path;
+}
+</script>

@@ -1,0 +1,4 @@
+case_id,time,image,risk,urgency
+02988f29,2026-02-06 19:48:50,xray_01.jpg,0.562,URGENT
+e81cfd88,2026-02-06 19:48:50,xray_02.jpg,0.562,URGENT
+da74c144,2026-02-06 19:48:50,xray_03.jpg,0.562,URGENT
