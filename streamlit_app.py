@@ -93,6 +93,17 @@ def backward_hook(module, grad_in, grad_out):
     global gradients
     gradients = grad_out[0]
 
+features = None
+gradients = None
+
+def forward_hook(module, input, output):
+    global features
+    features = output
+
+def backward_hook(module, grad_in, grad_out):
+    global gradients
+    gradients = grad_out[0]
+
 model.features.register_forward_hook(forward_hook)
 model.features.register_backward_hook(backward_hook)
 
