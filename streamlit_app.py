@@ -8,6 +8,19 @@ import cv2
 import uuid
 import os
 
+import os
+import urllib.request
+
+MODEL_URL = "https://drive.google.com/uc?id=1d2WvyvgUYZe8AKDtHrfUCNrJfOXCnZ8c"
+MODEL_PATH = "model.pth"
+
+def download_model():
+    if not os.path.exists(MODEL_PATH):
+        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+
+download_model()
+
+
 from fpdf import FPDF
 
 def clean_text(text):
