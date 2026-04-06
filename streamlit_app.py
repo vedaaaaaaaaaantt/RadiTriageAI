@@ -8,17 +8,6 @@ import cv2
 import uuid
 import os
 
-import os
-import urllib.request
-
-MODEL_URL = "https://drive.google.com/uc?id=1d2WvyvgUYZe8AKDtHrfUCNrJfOXCnZ8c"
-MODEL_PATH = "model.pth"
-
-def download_model():
-    if not os.path.exists(MODEL_PATH):
-        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
-
-download_model()
 
 
 from fpdf import FPDF
@@ -73,15 +62,24 @@ MODEL_PATH = "models/chexpert_epoch_10.pth"
 # ---------------- LOAD MODEL ----------------
 @st.cache_resource
 def load_model():
-    model = models.resnet50(weights=None)
-    model.fc = nn.Linear(model.fc.in_features, 14)
+    import os
+    import urllib.request
 
+    MODEL_URL = "https://drive.google.com/uc?id=1d2WvyvgUYZe8AKDtHrfUCNrJfOXCnZ8c"
+    MODEL_PATH = "model.pth"
+
+    # ✅ download model if not present
+    if not os.path.exists(MODEL_PATH):
+        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+
+    # ✅ create model (IMPORTANT: change this line)
+    model = DenseNet121()   # 👈 your model class
+
+    # ✅ load weights
     model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
-    model.to(DEVICE)
     model.eval()
-    return model
 
-model = load_model()
+    return model
 
 # ---------------- GRAD-CAM HOOKS ----------------
 features = None
