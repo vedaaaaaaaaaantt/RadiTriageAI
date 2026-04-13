@@ -151,7 +151,7 @@ def load_model():
     MODEL_PATH = "model.pth"
 
     if not os.path.exists(MODEL_PATH):
-        gdown.download(MODEL_URL, MODEL_PATH, quiet=False, fuzzy=True)
+        gdown.download(MODEL_URL, MODEL_PATH, quiet=False)
 
     # ✅ USE RESNET (NOT DENSENET)
     model = models.resnet50(pretrained=False)
